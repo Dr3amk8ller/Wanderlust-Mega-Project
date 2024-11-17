@@ -1,85 +1,98 @@
-@Library('Shared') _
 pipeline {
-    agent {label 'Node'}
-    
+    agent any
+
     parameters {
         string(name: 'FRONTEND_DOCKER_TAG', defaultValue: '', description: 'Frontend Docker tag of the image built by the CI job')
         string(name: 'BACKEND_DOCKER_TAG', defaultValue: '', description: 'Backend Docker tag of the image built by the CI job')
     }
 
     stages {
-        stage("Workspace cleanup"){
-            steps{
-                script{
+        stage("Workspace cleanup") {
+            steps {
+                script {
                     cleanWs()
                 }
             }
         }
-        
+
         stage('Git: Code Checkout') {
             steps {
-                script{
-                    code_checkout("https://github.com/LondheShubham153/Wanderlust-Mega-Project.git","main")
+                script {
+                    code_checkout("https://github.com/Dr3amk8ller/Wanderlust-Mega-Project.git", "main")
                 }
             }
         }
-        
+
         stage('Verify: Docker Image Tags') {
             steps {
-                script{
+                script {
                     echo "FRONTEND_DOCKER_TAG: ${params.FRONTEND_DOCKER_TAG}"
                     echo "BACKEND_DOCKER_TAG: ${params.BACKEND_DOCKER_TAG}"
                 }
             }
         }
-        
-        
-        stage("Update: Kubernetes manifests"){
-            steps{
-                script{
-                    dir('kubernetes'){
-                        sh """
-                            sed -i -e s/wanderlust-backend-beta.*/wanderlust-backend-beta:${params.BACKEND_DOCKER_TAG}/g backend.yaml
-                        """
+
+        stage("Update: Kubernetes manifests") {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        echo "Using Docker username: ${DOCKER_USERNAME}"
+
+                        // Replace backend image
+                        dir('kubernetes') {
+                            sh """
+                                sed -i -e "s|trainwithshubham|${DOCKER_USERNAME}|g" -e "s|wanderlust-backend-beta.*|wanderlust-backend-beta:${params.BACKEND_DOCKER_TAG}|g" backend.yaml
+                            """
+                        }
+
+                        // Replace frontend image
+                        dir('kubernetes') {
+                            sh """
+                                sed -i -e "s|trainwithshubham|${DOCKER_USERNAME}|g" -e "s|wanderlust-frontend-beta.*|wanderlust-frontend-beta:${params.FRONTEND_DOCKER_TAG}|g" frontend.yaml
+                            """
+                        }
                     }
-                    
-                    dir('kubernetes'){
-                        sh """
-                            sed -i -e s/wanderlust-frontend-beta.*/wanderlust-frontend-beta:${params.FRONTEND_DOCKER_TAG}/g frontend.yaml
-                        """
-                    }
-                    
                 }
             }
         }
-        
-        stage("Git: Code update and push to GitHub"){
-            steps{
-                script{
-                    withCredentials([gitUsernamePassword(credentialsId: 'Github-cred', gitToolName: 'Default')]) {
-                        sh '''
-                        echo "Checking repository status: "
-                        git status
-                    
-                        echo "Adding changes to git: "
-                        git add .
-                        
-                        echo "Commiting changes: "
-                        git commit -m "Updated environment variables"
-                        
-                        echo "Pushing changes to github: "
-                        git push https://github.com/LondheShubham153/Wanderlust-Mega-Project.git main
-                    '''
+
+        stage("Git: Code update and push to GitHub") {
+            steps {
+                script {
+                    withCredentials([gitUsernamePassword(credentialsId: 'Github-Cred', gitToolName: 'Default')]) {
+                        // Check if there are any changes to commit
+                        def changes = sh(script: 'git status --porcelain', returnStdout: true).trim()
+                        if (changes) {
+                            echo "Changes detected, proceeding to commit and push."
+                            sh '''
+                                git add .
+                                git commit -m "Updated Docker username and image tags"
+                                git push https://github.com/Dr3amk8ller/Wanderlust-Mega-Project.git main
+                            '''
+                        } else {
+                            echo "No changes to commit, skipping push."
+                        }
                     }
+                }
+            }
+        }
+
+        stage('Get Frontend URL') {
+            steps {
+                script {
+                    // Extract the value of VITE_API_PATH from the .env.docker file
+                    def frontendURL = sh(script: "grep VITE_API_PATH frontend/.env.docker | cut -d'=' -f2", returnStdout: true).trim()
+                    env.FRONTEND_URL = frontendURL
                 }
             }
         }
     }
-  post {
+
+    post {
         success {
             script {
                 emailext attachLog: true,
-                from: 'trainwithshubham@gmail.com',
+                from: '220231048@hbtu.ac.in',
                 subject: "Wanderlust Application has been updated and deployed - '${currentBuild.result}'",
                 body: """
                     <html>
@@ -93,17 +106,21 @@ pipeline {
                         <div style="background-color: #87CEEB; padding: 10px; margin-bottom: 10px;">
                             <p style="color: black; font-weight: bold;">URL: ${env.BUILD_URL}</p>
                         </div>
+                        <div style="background-color: #32CD32; padding: 10px; margin-bottom: 10px;">
+                            <p style="color: white; font-weight: bold; font-size: 16px;">Access the Frontend at: 
+                            <a href="${env.FRONTEND_URL}" style="color: yellow; font-weight: bold;">${env.FRONTEND_URL}</a></p>
+                        </div>
                     </body>
                     </html>
-            """,
-            to: 'trainwithshubham@gmail.com',
-            mimeType: 'text/html'
+                """,
+                to: '220231003@hbtu.ac.in,220231023@hbtu.ac.in,princemeghani100@gmail.com,220231075@hbtu.ac.in,220231011@hbtu.ac.in,220231012@hbtu.ac.in,220231078@hbtu.ac.in,220231077@hbtu.ac.in,220231069@hbtu.ac.in,220231024@hbtu.ac.in,220231030@hbtu.ac.in',
+                mimeType: 'text/html'
             }
         }
-      failure {
+        failure {
             script {
                 emailext attachLog: true,
-                from: 'trainwithshubham@gmail.com',
+                from: '220231048@hbtu.ac.in',
                 subject: "Wanderlust Application build failed - '${currentBuild.result}'",
                 body: """
                     <html>
@@ -114,12 +131,17 @@ pipeline {
                         <div style="background-color: #90EE90; padding: 10px; margin-bottom: 10px;">
                             <p style="color: black; font-weight: bold;">Build Number: ${env.BUILD_NUMBER}</p>
                         </div>
+                        <div style="background-color: #32CD32; padding: 10px; margin-bottom: 10px;">
+                            <p style="color: white; font-weight: bold; font-size: 16px;">Access the Frontend at: 
+                            <a href="${env.FRONTEND_URL}" style="color: yellow; font-weight: bold;">${env.FRONTEND_URL}</a></p>
+                        </div>
                     </body>
                     </html>
-            """,
-            to: 'trainwithshubham@gmail.com',
-            mimeType: 'text/html'
+                """,
+                to: 'princemeghani100@gmail.com,220231075@hbtu.ac.in,220231011@hbtu.ac.in,220231012@hbtu.ac.in,220231078@hbtu.ac.in,220231077@hbtu.ac.in,220231069@hbtu.ac.in,220231024@hbtu.ac.in,220231030@hbtu.ac.in,220231023@hbtu.ac.in,220231003@hbtu.ac.in',
+                mimeType: 'text/html'
             }
         }
     }
 }
+
